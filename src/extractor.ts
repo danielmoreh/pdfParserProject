@@ -1,5 +1,4 @@
-import fs from 'fs';
-import pdf from 'pdf-parse';
+import fs from "fs";
 
 export interface PDFMetadata {
   fileName: string;
@@ -11,87 +10,89 @@ export interface PageData {
   text: string;
 }
 
+// Callback type for processing each page as it's extracted
+export type PageCallback = (
+  pageData: PageData,
+  metadata: PDFMetadata
+) => Promise<void>;
+
 export class PDFExtractor {
-  async extract(filePath: string): Promise<{ metadata: PDFMetadata; pages: PageData[] }> {
+  /**
+   * Extracts PDF pages one at a time and calls the callback for each page
+   * @param filePath Path to the PDF file
+   * @param onPageExtracted Callback function called for each extracted page
+   * @returns PDF metadata
+   */
+  async extract(
+    filePath: string,
+    onPageExtracted: PageCallback
+  ): Promise<PDFMetadata> {
     try {
       console.log(`\n📖 Starting PDF extraction from: ${filePath}`);
 
-      // Read the PDF file
-      const dataBuffer = fs.readFileSync(filePath);
+      // Import canvas for DOM polyfills needed by pdfjs, must be done BEFORE importing pdfjs-dist
+      const canvas = await import("canvas");
+      const globalAny = globalThis as any;
+      globalAny.DOMMatrix = canvas.DOMMatrix;
+      globalAny.ImageData = canvas.ImageData;
+      globalAny.Canvas = canvas.Canvas;
+      const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
 
-      // Parse PDF with pdf-parse
-      const data = await pdf(dataBuffer, {
-        max: 0, // Parse all pages
+      const dataBuffer = fs.readFileSync(filePath);
+      const loadingTask = pdfjsLib.getDocument({
+        data: new Uint8Array(dataBuffer),
+        useSystemFonts: true,
       });
+
+      const pdfDocument = await loadingTask.promise;
 
       const metadata: PDFMetadata = {
         fileName: filePath.split(/[\\/]/).pop() || filePath,
-        totalPages: data.numpages,
+        totalPages: pdfDocument.numPages,
       };
 
       console.log(`✓ PDF loaded: ${metadata.fileName}`);
       console.log(`✓ Total pages: ${metadata.totalPages}`);
 
-      // Extract page-by-page text
-      // pdf-parse doesn't provide page-by-page extraction directly,
-      // so we'll use a different approach with render_page option
-      const pages: PageData[] = [];
+      for (let pageNum = 1; pageNum <= pdfDocument.numPages; pageNum++) {
+        const page = await pdfDocument.getPage(pageNum);
+        const textContent = await page.getTextContent();
+        const text = this.extractTextFromPage(textContent);
 
-      // Parse each page individually
-      for (let i = 1; i <= data.numpages; i++) {
-        const pageData = await pdf(dataBuffer, {
-          max: 1,
-          pagerender: this.renderPage(i),
-        });
+        const pageData: PageData = {
+          pageNumber: pageNum,
+          text: text,
+        };
 
-        pages.push({
-          pageNumber: i,
-          text: pageData.text,
-        });
+        await onPageExtracted(pageData, metadata); // Call the callback to process this page immediately
       }
 
-      console.log(`✓ Extracted text from ${pages.length} pages\n`);
+      console.log(
+        `✓ Completed extraction of all ${metadata.totalPages} pages\n`
+      );
 
-      return { metadata, pages };
+      return metadata;
     } catch (error) {
-      console.error('Error extracting PDF:', error);
+      console.error("Error extracting PDF:", error);
       throw error;
     }
   }
 
-  // Helper function to render a specific page
-  private renderPage(pageNum: number) {
-    let currentPage = 0;
+  /**
+   * Extracts text from a page's text content
+   */
+  private extractTextFromPage(textContent: any): string {
+    let lastY: number | undefined;
+    let text = "";
 
-    return (pageData: any) => {
-      currentPage++;
-
-      // Only render the requested page
-      if (currentPage !== pageNum) {
-        return '';
+    for (const item of textContent.items) {
+      // Check if we're on a new line based on Y position
+      if (lastY !== undefined && lastY !== item.transform[5]) {
+        text += "\n";
       }
-
-      // Render page function from pdf-parse
-      let renderOptions = {
-        normalizeWhitespace: false,
-        disableCombineTextItems: false,
-      };
-
-      return pageData.getTextContent(renderOptions).then((textContent: any) => {
-        let lastY: number | undefined;
-        let text = '';
-
-        for (let item of textContent.items) {
-          if (lastY === item.transform[5] || !lastY) {
-            text += item.str;
-          } else {
-            text += '\n' + item.str;
-          }
-          lastY = item.transform[5];
-        }
-
-        return text;
-      });
-    };
+      text += item.str;
+      lastY = item.transform[5];
+    }
+    return text;
   }
 }

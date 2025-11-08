@@ -1,143 +1,248 @@
-import { PageData } from './extractor';
+import { PageData } from "./extractor";
 
 export interface TransformedPage {
   pageNumber: number;
   rawText: string;
-  sectionHeading?: string;
+  sectionHeadings: string[];
+  sectionNumber?: string;
+  contentType: Array<"requirement" | "exception" | "definition" | "normal">;
   keywordCount: number;
+  keywords: string[];
+  hasFigure: boolean;
+  mandatoryLanguageCount: number;
+  exceptionLanguageCount: number;
 }
 
 export class Transformer {
   // Keywords related to accessibility compliance
   private readonly accessibilityKeywords = [
-    'accessible',
-    'accessibility',
-    'ADA',
-    'disabled',
-    'wheelchair',
-    'ramp',
-    'handrail',
-    'braille',
-    'visual',
-    'hearing',
-    'mobility',
-    'clearance',
-    'width',
-    'slope',
-    'elevator',
-    'signage',
-    'compliance',
-    'barrier-free',
-    'universal design',
+    "accessible",
+    "accessibility",
+    "ADA",
+    "disabled",
+    "wheelchair",
+    "ramp",
+    "handrail",
+    "braille",
+    "visual",
+    "hearing",
+    "mobility",
+    "clearance",
+    "width",
+    "slope",
+    "elevator",
+    "signage",
+    "compliance",
+    "barrier-free",
+    "universal design",
   ];
 
-  transform(pages: PageData[]): TransformedPage[] {
-    console.log('🔄 Starting transformation process...');
-
-    const transformedPages = pages.map((page) => {
-      const sectionHeading = this.extractSectionHeading(page.text);
-      const keywordCount = this.countAccessibilityKeywords(page.text);
-
-      return {
-        pageNumber: page.pageNumber,
-        rawText: page.text,
-        sectionHeading,
-        keywordCount,
-      };
-    });
-
-    console.log('✓ Transformation complete');
-    console.log(`✓ Identified ${transformedPages.filter((p) => p.sectionHeading).length} section headings`);
-    console.log(
-      `✓ Average keyword count: ${(
-        transformedPages.reduce((sum, p) => sum + p.keywordCount, 0) / transformedPages.length
-      ).toFixed(2)}`
+  /**
+   * Transforms a single page
+   */
+  transformPage(page: PageData): TransformedPage {
+    const sectionHeadings = this.extractSectionHeadings(page.text);
+    const sectionNumber = this.extractSectionNumber(page.text);
+    const keywords = this.extractAccessibilityKeywords(page.text);
+    const keywordCount = keywords.length;
+    const hasFigure = this.detectFigure(page.text);
+    const mandatoryLanguageCount = this.countMandatoryLanguage(page.text);
+    const exceptionLanguageCount = this.countExceptionLanguage(page.text);
+    const contentType = this.classifyContentType(
+      page.text,
+      mandatoryLanguageCount,
+      exceptionLanguageCount
     );
 
-    return transformedPages;
+    return {
+      pageNumber: page.pageNumber,
+      rawText: page.text,
+      sectionHeadings,
+      sectionNumber,
+      contentType,
+      keywordCount,
+      keywords,
+      hasFigure,
+      mandatoryLanguageCount,
+      exceptionLanguageCount,
+    };
+  }
+
+  private extractSectionHeadings(text: string): string[] {
+    const headings: string[] = [];
+
+    // Check if page contains a table (TABLE in capital letters)
+    const hasTable = /\bTABLE\b/.test(text);
+
+    // Patterns that are NOT headings (tables, figures, page numbers, etc.)
+    const excludePatterns = [
+      /^FIGURE\s+[\d.]+/i,
+      /^TABLE\s+[\d.]+/i,
+      /^Fig\.\s*[\d.]+/i,
+      /^Diagram\s+[\d.]+/i,
+      /^Illustration\s+[\d.]+/i,
+      /^\d+$/, // Just numbers
+      /^page\s+\d+/i, // Page numbers
+      /^see\s+(figure|table|section)/i, // Cross-references
+      /^note:/i, // Notes
+      /^example:/i, // Examples
+      /^\(\w+\)$/, // Single parenthetical like (a) or (1)
+      /^EXCEPTIONS?:?$/i, // EXCEPTION or EXCEPTIONS (with optional colon)
+      /\d+\.\d+/, // Section numbers with dots (e.g., "603.4", "1104.3.2")
+    ];
+
+    const lines = text.split("\n");
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+
+      // Skip if too short or matches exclude patterns
+      if (
+        trimmedLine.length < 3 ||
+        excludePatterns.some((p) => p.test(trimmedLine))
+      )
+        continue;
+
+      // Rule: ALL CAPS + must have at least one letter
+      if (
+        trimmedLine === trimmedLine.toUpperCase() &&
+        /[A-Z]/.test(trimmedLine) // Must contain at least one letter
+      ) {
+        headings.push(trimmedLine);
+
+        if (hasTable) {
+          // If page has a table, only take the first heading to avoid table columns
+          break;
+        }
+      }
+    }
+
+    return [...new Set(headings)];
   }
 
   /**
-   * Extracts section heading from page text
-   * Looks for patterns like:
-   * - "SECTION 1104" or "Section 1104"
-   * - "CHAPTER 11" or "Chapter 11"
-   * - All caps lines at the beginning
+   * Extracts list of accessibility-related keywords found in text
    */
-  private extractSectionHeading(text: string): string | undefined {
-    const lines = text.split('\n').filter((line) => line.trim().length > 0);
+  private extractAccessibilityKeywords(text: string): string[] {
+    const lowerText = text.toLowerCase();
+    const foundKeywords = new Set<string>();
 
-    if (lines.length === 0) return undefined;
+    for (const keyword of this.accessibilityKeywords) {
+      const regex = new RegExp(`\\b${keyword.toLowerCase()}\\b`, "gi");
+      if (regex.test(lowerText)) {
+        foundKeywords.add(keyword);
+      }
+    }
 
-    // Check first few lines for section patterns
-    for (let i = 0; i < Math.min(5, lines.length); i++) {
+    return Array.from(foundKeywords);
+  }
+
+  /**
+   * Extracts section number patterns from text
+   * Looks for pattern: "707.1 General." - number with dot followed by text
+   */
+  private extractSectionNumber(text: string): string | undefined {
+    const lines = text.split("\n").filter((line) => line.trim().length > 0);
+
+    for (let i = 0; i < Math.min(10, lines.length); i++) {
       const line = lines[i].trim();
-
-      // Pattern 1: SECTION or CHAPTER followed by number
-      const sectionMatch = line.match(/^(SECTION|CHAPTER|Section|Chapter)\s+[\d.]+/i);
-      if (sectionMatch) {
-        return line;
-      }
-
-      // Pattern 2: All caps line (likely a heading) with reasonable length
-      if (line === line.toUpperCase() && line.length > 5 && line.length < 100) {
-        // Check if it contains at least one letter
-        if (/[A-Z]/.test(line)) {
-          return line;
-        }
-      }
-
-      // Pattern 3: Lines ending with colon (often section titles)
-      if (line.endsWith(':') && line.length < 100) {
-        return line;
-      }
+      const numberTextMatch = line.match(/^(\d+(?:\.\d+)+)\s+[A-Za-z]/);
+      if (numberTextMatch) return numberTextMatch[1];
     }
 
     return undefined;
   }
 
   /**
-   * Counts occurrences of accessibility-related keywords
-   * Case-insensitive matching
+   * Classifies the content type of the page
+   * Returns an array of all applicable content types
    */
-  private countAccessibilityKeywords(text: string): number {
-    const lowerText = text.toLowerCase();
-    let count = 0;
+  private classifyContentType(
+    text: string,
+    mandatoryLanguageCount: number,
+    exceptionLanguageCount: number
+  ): Array<"requirement" | "exception" | "definition" | "normal"> {
+    const types: Array<"requirement" | "exception" | "definition" | "normal"> =
+      [];
 
-    for (const keyword of this.accessibilityKeywords) {
-      const regex = new RegExp(`\\b${keyword.toLowerCase()}\\b`, 'gi');
-      const matches = lowerText.match(regex);
-      if (matches) {
-        count += matches.length;
-      }
+    // Check for definition section
+    if (
+      /\bdefinitions?\b/i.test(text) ||
+      /\bmeans\b.*following/i.test(text) ||
+      text.split("\n").filter((line) => /^[A-Z][A-Za-z\s]+\.\s+/.test(line))
+        .length > 3
+    ) {
+      types.push("definition");
+    }
+
+    if (exceptionLanguageCount >= 2) {
+      types.push("exception");
+    }
+
+    if (mandatoryLanguageCount >= 2) {
+      types.push("requirement");
+    }
+
+    if (types.length === 0) {
+      // If no specific type found, mark as normal
+      types.push("normal");
+    }
+
+    return types;
+  }
+
+  /**
+   * Detects if the page references figures or diagrams
+   */
+  private detectFigure(text: string): boolean {
+    const figurePatterns = [
+      /FIGURE\s+\d+/i,
+      /Fig\.\s*\d+/i,
+      /see\s+figure/i,
+      /shown\s+in\s+figure/i,
+      /diagram\s+\d+/i,
+      /illustration/i,
+    ];
+
+    return figurePatterns.some((pattern) => pattern.test(text));
+  }
+
+  /**
+   * Counts mandatory language occurrences (shall, must, required)
+   */
+  private countMandatoryLanguage(text: string): number {
+    const mandatoryPatterns = [
+      /\bshall\b/gi,
+      /\bmust\b/gi,
+      /\brequired\b/gi,
+      /\bmandatory\b/gi,
+    ];
+
+    let count = 0;
+    for (const pattern of mandatoryPatterns) {
+      const matches = text.match(pattern);
+      if (matches) count += matches.length;
     }
 
     return count;
   }
 
   /**
-   * Generates a summary report of the transformation
+   * Counts exception/conditional language occurrences
    */
-  generateReport(transformedPages: TransformedPage[]): void {
-    console.log('\n📊 Transformation Report:');
-    console.log('─'.repeat(50));
+  private countExceptionLanguage(text: string): number {
+    const exceptionPatterns = [
+      /\bexception\b/gi,
+      /\bpermitted\b/gi,
+      /\ballowed\b/gi,
+      /\bnot required\b/gi,
+    ];
 
-    const pagesWithHighKeywords = transformedPages.filter((p) => p.keywordCount > 3);
-    console.log(`Pages with high relevance (>3 keywords): ${pagesWithHighKeywords.length}`);
-
-    if (pagesWithHighKeywords.length > 0) {
-      console.log('\nTop 5 most relevant pages:');
-      pagesWithHighKeywords
-        .sort((a, b) => b.keywordCount - a.keywordCount)
-        .slice(0, 5)
-        .forEach((page) => {
-          console.log(`  Page ${page.pageNumber}: ${page.keywordCount} keywords`);
-          if (page.sectionHeading) {
-            console.log(`    Section: ${page.sectionHeading.substring(0, 60)}...`);
-          }
-        });
+    let count = 0;
+    for (const pattern of exceptionPatterns) {
+      const matches = text.match(pattern);
+      if (matches) count += matches.length;
     }
 
-    console.log('─'.repeat(50) + '\n');
+    return count;
   }
 }

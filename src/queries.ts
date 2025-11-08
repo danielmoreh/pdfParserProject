@@ -1,157 +1,142 @@
-import { Database } from './database';
+import { Database } from "./database";
 
-export class QueryDemonstration {
+export class QueryExamples {
   constructor(private db: Database) {}
 
-  async runAllQueries(): Promise<void> {
-    console.log('🔍 Running Demonstration Queries');
-    console.log('═'.repeat(70));
-
-    await this.query1_verifyMetadata();
-    console.log('\n' + '─'.repeat(70) + '\n');
-
-    await this.query2_specificPage();
-    console.log('\n' + '─'.repeat(70) + '\n');
-
-    await this.query3_relevantPages();
-    console.log('\n' + '═'.repeat(70) + '\n');
+  /**
+   * Get most relevant pages (highest keyword count)
+   */
+  async getMostRelevantPages(limit: number = 5): Promise<any[]> {
+    return this.db.query(
+      `SELECT
+        page_number,
+        section_headings,
+        section_number,
+        content_type,
+        keyword_count,
+        keywords
+      FROM page_content
+      WHERE keyword_count > 0
+      ORDER BY keyword_count DESC
+      LIMIT ?`,
+      [limit]
+    );
   }
 
   /**
-   * Query 1: Verification - Select file_name and total_pages from documents table
+   * Query 1: Get document metadata
    */
-  private async query1_verifyMetadata(): Promise<void> {
-    console.log('Query 1: Document Metadata Verification');
-    console.log('─'.repeat(70));
-
-    const sql = `
+  async getDocumentMetadata(): Promise<any[]> {
+    return this.db.query(`
       SELECT file_name, total_pages
       FROM documents
-    `;
-
-    console.log('SQL:\n' + sql.trim() + '\n');
-
-    const results = await this.db.query<{ file_name: string; total_pages: number }>(sql);
-
-    console.log('Results:');
-    if (results.length > 0) {
-      results.forEach((row) => {
-        console.log(`  File Name: ${row.file_name}`);
-        console.log(`  Total Pages: ${row.total_pages}`);
-      });
-    } else {
-      console.log('  No documents found.');
-    }
+    `);
   }
 
   /**
-   * Query 2: Segmentation - Select text from a specific page (Page 5)
+   * Query 2: Get text from a specific page
    */
-  private async query2_specificPage(): Promise<void> {
-    console.log('Query 2: Content Segmentation - Page 5');
-    console.log('─'.repeat(70));
-
-    const pageNumber = 5;
-    const sql = `
-      SELECT page_number, raw_text, section_heading
+  async getPageText(pageNumber: number): Promise<any[]> {
+    return this.db.query(
+      `SELECT
+        page_number,
+        raw_text
       FROM page_content
-      WHERE page_number = ?
-    `;
-
-    console.log('SQL:\n' + sql.trim() + '\n');
-    console.log(`Parameters: page_number = ${pageNumber}\n`);
-
-    const results = await this.db.query<{
-      page_number: number;
-      raw_text: string;
-      section_heading: string | null;
-    }>(sql, [pageNumber]);
-
-    console.log('Results:');
-    if (results.length > 0) {
-      const page = results[0];
-      console.log(`  Page Number: ${page.page_number}`);
-      if (page.section_heading) {
-        console.log(`  Section Heading: ${page.section_heading}`);
-      }
-      console.log(`  Text Preview (first 300 chars):`);
-      console.log('  ' + '─'.repeat(68));
-      const preview = page.raw_text.substring(0, 300).replace(/\n/g, '\n  ');
-      console.log(`  ${preview}${page.raw_text.length > 300 ? '...' : ''}`);
-      console.log('  ' + '─'.repeat(68));
-      console.log(`  Total Text Length: ${page.raw_text.length} characters`);
-    } else {
-      console.log(`  No content found for page ${pageNumber}.`);
-    }
+      WHERE page_number = ?`,
+      [pageNumber]
+    );
   }
 
   /**
-   * Query 3: Analysis - Select pages most relevant to Accessibility Code Compliance
-   * (pages with keyword count > 3)
+   * Query 3: Get pages most relevant to Accessibility Code Compliance
    */
-  private async query3_relevantPages(): Promise<void> {
-    console.log('Query 3: Accessibility Compliance Relevance Analysis');
-    console.log('─'.repeat(70));
-
-    const threshold = 3;
-    const sql = `
-      SELECT page_number, section_heading, keyword_count
+  async getPagesAboveKeywordThreshold(threshold: number = 3): Promise<any[]> {
+    return this.db.query(
+      `SELECT
+        page_number,
+        section_headings,
+        section_number,
+        keyword_count,
+        keywords
       FROM page_content
       WHERE keyword_count > ?
-      ORDER BY keyword_count DESC
-    `;
-
-    console.log('SQL:\n' + sql.trim() + '\n');
-    console.log(`Parameters: keyword_count_threshold = ${threshold}\n`);
-
-    const results = await this.db.query<{
-      page_number: number;
-      section_heading: string | null;
-      keyword_count: number;
-    }>(sql, [threshold]);
-
-    console.log('Results:');
-    if (results.length > 0) {
-      console.log(`  Found ${results.length} page(s) with high accessibility relevance:\n`);
-      console.log('  Page #  | Keywords | Section Heading');
-      console.log('  ' + '─'.repeat(66));
-
-      results.forEach((row) => {
-        const pageNum = row.page_number.toString().padEnd(7);
-        const keywords = row.keyword_count.toString().padEnd(8);
-        const heading = row.section_heading
-          ? row.section_heading.substring(0, 40)
-          : 'N/A';
-        console.log(`  ${pageNum} | ${keywords} | ${heading}`);
-      });
-
-      console.log('\n  Summary Statistics:');
-      console.log(`    Total Relevant Pages: ${results.length}`);
-      console.log(
-        `    Highest Keyword Count: ${Math.max(...results.map((r) => r.keyword_count))}`
-      );
-      console.log(
-        `    Average Keyword Count: ${(
-          results.reduce((sum, r) => sum + r.keyword_count, 0) / results.length
-        ).toFixed(2)}`
-      );
-    } else {
-      console.log(`  No pages found with keyword count > ${threshold}.`);
-    }
+      ORDER BY keyword_count DESC`,
+      [threshold]
+    );
   }
 
   /**
-   * Additional helper: Export queries as SQL strings for documentation
+   * Get statistics about the document
    */
-  static getQuerySQL(): {
-    query1: string;
-    query2: string;
-    query3: string;
-  } {
-    return {
-      query1: `SELECT file_name, total_pages FROM documents;`,
-      query2: `SELECT page_number, raw_text, section_heading FROM page_content WHERE page_number = 5;`,
-      query3: `SELECT page_number, section_heading, keyword_count FROM page_content WHERE keyword_count > 3 ORDER BY keyword_count DESC;`,
-    };
+  async getDocumentStats(): Promise<any> {
+    const stats = await this.db.query(`
+      SELECT
+        COUNT(*) as total_pages,
+        SUM(CASE WHEN content_type LIKE '%"requirement"%' THEN 1 ELSE 0 END) as requirement_pages,
+        SUM(CASE WHEN content_type LIKE '%"exception"%' THEN 1 ELSE 0 END) as exception_pages,
+        SUM(CASE WHEN content_type LIKE '%"definition"%' THEN 1 ELSE 0 END) as definition_pages,
+        SUM(CASE WHEN has_figure = 1 THEN 1 ELSE 0 END) as pages_with_figures,
+        COUNT(DISTINCT section_number) as unique_sections,
+        AVG(keyword_count) as avg_keywords_per_page,
+        AVG(mandatory_language_count) as avg_mandatory_per_page,
+        AVG(exception_language_count) as avg_exception_per_page
+      FROM page_content
+    `);
+
+    return stats[0];
+  }
+
+  async runAllQueries(): Promise<void> {
+    console.log("\n✅ Query 1: Document Metadata");
+    const metadata = await this.getDocumentMetadata();
+    metadata.forEach((doc) => {
+      console.log(`  File: ${doc.file_name}`);
+      console.log(`  Total Pages: ${doc.total_pages}`);
+    });
+
+    console.log("\n✅ Query 2: Page 5 Content");
+    const page5 = await this.getPageText(5);
+    if (page5.length > 0) {
+      console.log(`  Page ${page5[0].page_number} full text:`);
+      console.log(`  ${page5[0].raw_text}`);
+    } else {
+      console.log("  Page 5 not found");
+    }
+
+    console.log("\n✅ Query 3: Pages with Keyword Count > 2");
+    const threshold = 2;
+    const relevantCompliancePages = await this.getPagesAboveKeywordThreshold(
+      threshold
+    );
+    console.log(
+      `  Found ${relevantCompliancePages.length} pages with more than ${threshold} accessibility keywords:`
+    );
+    relevantCompliancePages.forEach((page) => {
+      console.log(
+        `    Page ${page.page_number}: ${
+          page.section_headings || "No heading"
+        } (${page.keyword_count} keywords)`
+      );
+      console.log(`      Keywords: ${page.keywords}`);
+    });
+
+    console.log("\n" + "─".repeat(70));
+    console.log("ADDITIONAL QUERIES (Beyond Assignment Requirements)");
+    console.log("─".repeat(70));
+
+    console.log("\n📋 Top 5 Most Relevant Pages (by keyword count):");
+    const relevantPages = await this.getMostRelevantPages(5);
+    relevantPages.forEach((page) => {
+      console.log(
+        `  Page ${page.page_number}: the page headings are: ${page.section_headings} (found ${page.keyword_count} keywords)`
+      );
+      console.log(`    Keywords found: ${page.keywords}`);
+    });
+
+    console.log("\n📊 Document Statistics:");
+    const stats = await this.getDocumentStats();
+    console.log(JSON.stringify(stats, null, 2));
+
+    console.log("");
   }
 }

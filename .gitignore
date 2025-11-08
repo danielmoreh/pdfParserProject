@@ -29,6 +29,8 @@ npm-debug.log*
 Thumbs.db
 
 # IDE
+.claude/
+.qodo/
 .vscode/
 .idea/
 *.swp
@@ -37,7 +39,3 @@ Thumbs.db
 
 # Test coverage
 coverage/
-
-# PDF files (user should provide their own)
-FBC-115-163.pdf
-*.pdf
