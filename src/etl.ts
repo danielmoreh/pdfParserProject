@@ -128,7 +128,10 @@ class ETLPipeline {
   }
 }
 
-const pdfFile = "FBC-115-163.pdf";
+const args = process.argv.slice(2);
+const pdfFile = args[0] || "FBC-115-163.pdf";
 const dbFile = "accessibility_codes.db";
+console.log(`Using PDF file: ${pdfFile}`);
+
 const pipeline = new ETLPipeline(pdfFile, dbFile);
 pipeline.run();
